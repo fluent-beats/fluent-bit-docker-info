@@ -28,19 +28,84 @@
 #include "docker_info_config.h"
 
 
+static container_info *init_container_info(char *id)
+{
+    container_info *container;
+
+    container = flb_malloc(sizeof(container_info));
+    if (!container) {
+        flb_errno();
+        return NULL;
+    }
+
+    /* Must save the longer container id */
+    container->id = flb_malloc(sizeof(char)*(DOCKER_LONG_ID_LEN + 1));
+    if (!container->id) {
+        flb_errno();
+        flb_free(container);
+        return NULL;
+    }
+    strncpy(container->id, id, DOCKER_LONG_ID_LEN);
+    container->id[DOCKER_LONG_ID_LEN] = '\0';
+
+    return container;
+}
+
 /**
- * Sends request to docker's unix socket
- * HTTP GET /containers/json?all=true
+ * Traverse /var/lib/docker/containers folder to pick container
  *
  * @param ctx  Pointer to flb_in_dinfo_config
  *
+ * @return mk_list with all retrieved containers
+ */
+static struct mk_list *get_containers_info(struct flb_in_dinfo_config *ctx)
+{
+    DIR *dp;
+    struct dirent *ep;
+    struct mk_list *list;
+
+    list = flb_malloc(sizeof(struct mk_list));
+    if (!list) {
+        flb_errno();
+        return NULL;
+    }
+    mk_list_init(list);
+
+    dp = opendir(ctx->containers_path);
+    if (dp != NULL) {
+
+        while ((ep = readdir(dp)) != NULL) {
+            if (ep->d_type == OS_DIR_TYPE) {
+                if (strlen(ep->d_name) == DOCKER_LONG_ID_LEN) {
+                    container_info *container = init_container_info(ep->d_name);
+                    mk_list_add(&container->_head, list);
+                }
+            }
+        }
+        closedir(dp);
+    }
+
+    return list;
+}
+
+/**
+ * Sends request to Docker's unix socket
+ * HTTP GET /containers/json?all=true&filters={"id":["xxx"]}
+ *
+ * @param ctx  Pointer to flb_in_dinfo_config
+ * @param container_id Unique Docker container id
+ *
  * @return int 0 on success, -1 on failure
  */
-static void dinfo_unix_socket_write(struct flb_in_dinfo_config *ctx)
+static void dinfo_unix_socket_write(struct flb_in_dinfo_config *ctx,
+                                    char* container_id)
 {
-    char request[50];
+    char request[512];
+    char filters[120];
 
-    strcpy(request, "GET /containers/json?all=true HTTP/1.0\r\n\r\n");
+    /* filters={"id":["xxx"]} must be url encoded */
+    snprintf(filters, sizeof(filters), "%%7B%%22id%%22%%3A%%5B%%22%s%%22%%5D%%7D", container_id);
+    snprintf(request, sizeof(request), "GET /containers/json?all=true&filters=%s HTTP/1.0\r\n\r\n", filters);
     flb_plg_trace(ctx->ins, "send request %s", request);
 
     /* Write request */
@@ -50,7 +115,7 @@ static void dinfo_unix_socket_write(struct flb_in_dinfo_config *ctx)
 }
 
 /**
- * Read response from docker's unix socket.
+ * Read response from Docker's unix socket.
  *
  * @param ins           Pointer to flb_input_instance
  * @param config        Pointer to flb_config
@@ -61,6 +126,7 @@ static void dinfo_unix_socket_write(struct flb_in_dinfo_config *ctx)
 static int dinfo_unix_socket_read(struct flb_input_instance *ins,
                                    struct flb_config *config, void *in_context)
 {
+    const char* empty_array = "[]\n";
     int ret = 0;
     int error;
     char *body;
@@ -85,7 +151,19 @@ static int dinfo_unix_socket_read(struct flb_input_instance *ins,
         /* Skip HTTP headers */
         body = strstr(ctx->buf, HTTP_BODY_DELIMITER);
         body += strlen(HTTP_BODY_DELIMITER);
-        str_len = strlen(body);
+
+        if(strcmp(empty_array, body) == 0)
+        {
+            flb_plg_trace(ctx->ins, "Empty response");
+            return 0;
+        }
+
+        /*
+            Fluentbit JSON parser DO NOT SUPPORT arrays.
+            To fix skip '[', send '{object}', ignore ']\n' and done :)
+        */
+        body += 1;
+        str_len = strlen(body) - 2;
 
         if (!ctx->parser) {
             /* Initialize local msgpack buffer */
@@ -140,7 +218,7 @@ static int dinfo_unix_socket_read(struct flb_input_instance *ins,
 }
 
 /**
- * Creates the connection to docker's unix socket
+ * Creates the connection to Docker's unix socket
  *
  * @param ctx  Pointer to flb_in_dinfo_config
  *
@@ -184,7 +262,7 @@ static int dinfo_unix_socket_connect(struct flb_in_dinfo_config *ctx)
 }
 
 /**
- * Callback function to interact with docker engine API.
+ * Callback function to interact with Docker engine API.
  *
  * @param ins           Pointer to flb_input_instance
  * @param config        Pointer to flb_config
@@ -197,16 +275,27 @@ static int cb_dinfo_collect(struct flb_input_instance *ins,
                              struct flb_config *config, void *in_context)
 {
     struct flb_in_dinfo_config *ctx = in_context;
-    if(dinfo_unix_socket_connect(ctx) != -1)
-    {
-        dinfo_unix_socket_write(ctx);
-        dinfo_unix_socket_read(ins, config, in_context);
+    struct mk_list *containers;
+    struct mk_list *head;
+    struct mk_list *tmp;
+    container_info *container;
+
+    containers = get_containers_info(ctx);
+    mk_list_foreach_safe(head, tmp, containers) {
+        container = mk_list_entry(head, container_info, _head);
+
+        if(dinfo_unix_socket_connect(ctx) != -1)
+        {
+            dinfo_unix_socket_write(ctx, container->id);
+            dinfo_unix_socket_read(ins, config, in_context);
+        }
     }
+
     return 0;
 }
 
 /**
- * Callback function to initialize docker info plugin
+ * Callback function to initialize the plugin
  *
  * @param ins     Pointer to flb_input_instance
  * @param config  Pointer to flb_config
