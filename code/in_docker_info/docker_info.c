@@ -117,6 +117,11 @@ static void dinfo_unix_socket_write(struct flb_in_dinfo_config *ctx,
 /**
  * Read response from Docker's unix socket.
  *
+ * Notes:
+ *   The JSON response is sent as MessagePack string.
+ *   To parse it back the Fluentbit JSON parser can be used.
+ *   The Fluentbit JSON parser breaks if the final '\n' in the response is removed.
+ *
  * @param ins           Pointer to flb_input_instance
  * @param config        Pointer to flb_config
  * @param in_context    void Pointer used to cast to flb_in_dinfo_config
@@ -135,7 +140,7 @@ static int dinfo_unix_socket_read(struct flb_input_instance *ins,
     msgpack_packer mp_pck;
     msgpack_sbuffer mp_sbuf;
 
-    /* variables for parser */
+    /* Variables for parser */
     int parser_ret = -1;
     void *out_buf = NULL;
     size_t out_size = 0;
@@ -159,11 +164,13 @@ static int dinfo_unix_socket_read(struct flb_input_instance *ins,
         }
 
         /*
-            Fluentbit JSON parser DO NOT SUPPORT arrays.
-            To fix skip '[', send '{object}', ignore ']\n' and done :)
+            Fluentbit JSON parser DOES NOT SUPPORT arrays.
+            Response contains single element, so remove the array
+            by skipping first '[', and replace ending ']\n' by '\n'
         */
         body += 1;
-        str_len = strlen(body) - 2;
+        str_len = strlen(body) - 1;
+        body[str_len - 1] = '\n';
 
         if (!ctx->parser) {
             /* Initialize local msgpack buffer */
