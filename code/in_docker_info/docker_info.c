@@ -38,15 +38,15 @@ static container_info *init_container_info(char *id)
         return NULL;
     }
 
-    /* Must save the longer container id */
-    container->id = flb_malloc(sizeof(char)*(DOCKER_LONG_ID_LEN + 1));
+    /* Safe to store short container id */
+    container->id = flb_malloc(sizeof(char)*(DOCKER_SHORT_ID_LEN + 1));
     if (!container->id) {
         flb_errno();
         flb_free(container);
         return NULL;
     }
-    strncpy(container->id, id, DOCKER_LONG_ID_LEN);
-    container->id[DOCKER_LONG_ID_LEN] = '\0';
+    strncpy(container->id, id, DOCKER_SHORT_ID_LEN);
+    container->id[DOCKER_SHORT_ID_LEN] = '\0';
 
     return container;
 }
@@ -90,7 +90,7 @@ static struct mk_list *get_containers_info(struct flb_in_dinfo_config *ctx)
 
 /**
  * Sends request to Docker's unix socket
- * HTTP GET /containers/json?all=true&filters={"id":["xxx"]}
+ * HTTP GET /containers/{ID}/json
  *
  * @param ctx  Pointer to flb_in_dinfo_config
  * @param container_id Unique Docker container id
@@ -101,11 +101,8 @@ static void dinfo_unix_socket_write(struct flb_in_dinfo_config *ctx,
                                     char* container_id)
 {
     char request[512];
-    char filters[120];
 
-    /* filters={"id":["xxx"]} must be url encoded */
-    snprintf(filters, sizeof(filters), "%%7B%%22id%%22%%3A%%5B%%22%s%%22%%5D%%7D", container_id);
-    snprintf(request, sizeof(request), "GET /containers/json?all=true&filters=%s HTTP/1.0\r\n\r\n", filters);
+    snprintf(request, sizeof(request), "GET /containers/%s/json HTTP/1.0\r\n\r\n", container_id);
     flb_plg_trace(ctx->ins, "send request %s", request);
 
     /* Write request */
@@ -131,7 +128,6 @@ static void dinfo_unix_socket_write(struct flb_in_dinfo_config *ctx,
 static int dinfo_unix_socket_read(struct flb_input_instance *ins,
                                    struct flb_config *config, void *in_context)
 {
-    const char* empty_array = "[]\n";
     int ret = 0;
     int error;
     char *body;
@@ -156,21 +152,7 @@ static int dinfo_unix_socket_read(struct flb_input_instance *ins,
         /* Skip HTTP headers */
         body = strstr(ctx->buf, HTTP_BODY_DELIMITER);
         body += strlen(HTTP_BODY_DELIMITER);
-
-        if(strcmp(empty_array, body) == 0)
-        {
-            flb_plg_trace(ctx->ins, "Empty response");
-            return 0;
-        }
-
-        /*
-            Fluentbit JSON parser DOES NOT SUPPORT arrays.
-            Response contains single element, so remove the array
-            by skipping first '[', and replace ending ']\n' by '\n'
-        */
-        body += 1;
-        str_len = strlen(body) - 1;
-        body[str_len - 1] = '\n';
+        str_len = strlen(body);
 
         if (!ctx->parser) {
             /* Initialize local msgpack buffer */

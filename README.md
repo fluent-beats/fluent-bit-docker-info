@@ -1,6 +1,6 @@
 # Description
 
-[Fluent Bit](https://fluentbit.io) input plugin able to access [Docker Container Info](https://docs.docker.com/engine/api/v1.41/#operation/ContainerList)
+[Fluent Bit](https://fluentbit.io) input plugin able to access [Docker Container Inspect](https://docs.docker.com/engine/api/v1.41/#operation/ContainerInspect)
 
 # Requirements
 
@@ -23,9 +23,7 @@ docker run --rm \
 
  # Design
 
- ## Required volumes
-
- ## Required volumes
+  ## Required volumes
 
  `Fluentbit` provides very simple libraries to deal with JSON processing, so to make this plugin bare simple it uses a simple strategy to collect info about all container running in the `host node`.
 
@@ -37,11 +35,9 @@ docker run --rm \
 
 
 ## Collecting info
-The plugin will access the Docker Engine endpoint `/containers/json`.
+The plugin will access the Docker Engine endpoint `/containers/{id}/json`.
 
-It will use the following parameters:
- * all=true (return information even if container is not running)
- * filters={"id":$id} (limits the response to a single container)
+It will not use any parameter.
 
 Each response will include important information like:
 
