@@ -37,7 +37,8 @@ docker run --rm \
 ## Collecting info
 The plugin will access the Docker Engine endpoint `/containers/{id}/json`.
 
-It will not use any parameter.
+It will use the following parameters:
+ * size=true (return information about container size)
 
 Each response will include important information like:
 

@@ -90,7 +90,7 @@ static struct mk_list *get_containers_info(struct flb_in_dinfo_config *ctx)
 
 /**
  * Sends request to Docker's unix socket
- * HTTP GET /containers/{ID}/json
+ * HTTP GET /containers/{ID}/json?size=true
  *
  * @param ctx  Pointer to flb_in_dinfo_config
  * @param container_id Unique Docker container id
@@ -102,7 +102,7 @@ static void dinfo_unix_socket_write(struct flb_in_dinfo_config *ctx,
 {
     char request[512];
 
-    snprintf(request, sizeof(request), "GET /containers/%s/json HTTP/1.0\r\n\r\n", container_id);
+    snprintf(request, sizeof(request), "GET /containers/%s/json?size=true HTTP/1.0\r\n\r\n", container_id);
     flb_plg_trace(ctx->ins, "send request %s", request);
 
     /* Write request */
