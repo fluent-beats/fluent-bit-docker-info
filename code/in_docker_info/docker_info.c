@@ -27,7 +27,13 @@
 #include "docker_info.h"
 #include "docker_info_config.h"
 
-
+/**
+ * Build information about container
+ *
+ * @param id  Unique Docker container id
+ *
+ * @return pointer to container_info
+ */
 static container_info *init_container_info(char *id)
 {
     container_info *container;
